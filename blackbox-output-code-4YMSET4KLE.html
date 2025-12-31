@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memory Keeper</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        .memory {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 8px;
+            background-color: #fff;
+            position: relative;
+        }
+        .memory img, .memory video {
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+        .memory p {
+            margin: 0 0 10px 0;
+        }
+        .delete-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #ff4d4d;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        form {
+            margin-bottom: 20px;
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+        }
+        input, textarea, button {
+            display: block;
+            width: 100%;
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #share-url {
+            margin-top: 10px;
+            background-color: #f0f0f0;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 10px 0;
+        }
+        .error {
+            color: red;
+            font-size: 14px;
+        }
+        @media (max-width: 600px) {
+            body { padding: 10px; }
+            .memory { padding: 10px; }
+        }
+    </style>
+</head>
+<body>
+    <h1>Memory Keeper</h1>
+    <p>Save and share your memories (texts, images, videos) privately with a partner!</p>
+
+    <form id="memory-form">
+        <label for="text">Text Memory:</label>
+        <textarea id="text" rows="3" placeholder="Enter your memory text..."></textarea>
+
+        <label for="image">Image Memory (max 5MB):</label>
+        <input type="file" id="image" accept="image/*">
+
+        <label for="video">Video Memory (max 50MB):</label>
+        <input type="file" id="video" accept="video/*">
+
+        <button type="submit">Save Memory</button>
+        <div id="form-error" class="error"></div>
+    </form>
+
+    <div class="loading" id="loading">Processing...</div>
+
+    <h2>Your Memories</h2>
+    <div id="memories-container"></div>
+
+    <button id="export-btn">Export Memories</button>
+    <input type="file" id="import-file" accept=".json" style="display: none;">
+    <button id="import-btn">Import Memories</button>
+
+    <button id="share-btn">Share Memories Privately</button>
+    <input type="text" id="share-url" readonly placeholder="Private share URL will appear here">
+
+    <script>
+        const form = document.getElementById('memory-form');
+        const container = document.getElementById('memories-container');
+        const shareBtn = document.getElementById('share-btn');
+        const shareUrlInput = document.getElementById('share-url');
+        const exportBtn = document.getElementById('export-btn');
+        const importBtn = document.getElementById('import-btn');
+        const importFile = document.getElementById('import-file');
+        const loading = document.getElementById('loading');
+        const formError = document.getElementById('form-error');
+
+        let memories = JSON.parse(localStorage.getItem('memories')) || [];
+
+        // Utility: Encrypt/decrypt using Web Crypto API
+        async function encryptData(data, password) {
+            const key = await crypto.subtle.importKey(
+                'raw',
+                new TextEncoder().encode(password),
+                { name: 'AES-GCM' },
+                false,
+                ['encrypt']
+            );
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const encrypted = await crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv },
+                key,
+                new TextEncoder().encode(JSON.stringify(data))
+            );
+            return btoa(String.fromCharCode(...iv) + String.fromCharCode(...new Uint8Array(encrypted)));
+        }
+
+        async function decryptData(encrypted, password) {
+            try {
+                const data = Uint8Array.from(atob(encrypted), c => c.charCodeAt(0));
+                const iv = data.slice(0, 12);
+                const encryptedData = data.slice(12);
+                const key = await crypto.subtle.importKey(
+                    'raw',
+                    new TextEncoder().encode(password),
+                    { name: 'AES-GCM' },
+                    false,
+                    ['decrypt']
+                );
+                const decrypted = await crypto.subtle.decrypt(
+                    { name: 'AES-GCM', iv },
+                    key,
+                    encryptedData
+                );
+                return JSON.parse(new TextDecoder().decode(decrypted));
+            } catch {
+                throw new Error('Invalid password or corrupted data.');
+            }
+        }
+
+        function renderMemories(memoriesToRender, isShared = false) {
+            container.innerHTML = '';
+            memoriesToRender.forEach((memory, index) => {
+                const div = document.createElement('div');
+                div.className = 'memory';
+                if (memory.text) div.innerHTML += `<p>${memory.text}</p>`;
+                if (memory.image) div.innerHTML += `<img src="${memory.image}">`;
+                if (memory.video) div.innerHTML += `<video controls src="${memory.video}"></video>`;
+                if (!isShared) {
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'delete-btn';
+                    deleteBtn.textContent = '×';
+                    deleteBtn.onclick = () => {
+                        memories.splice(index, 1);
+                        localStorage.setItem('memories', JSON.stringify(memories));
+                        renderMemories(memories);
+                    };
+                    div.appendChild(deleteBtn);
+                }
+                container.appendChild(div);
+            });
+        }
+
+        window.addEventListener('load', async () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const sharedData = urlParams.get('data');
+            if (sharedData) {
+                const password = prompt('Enter password to view shared memories:');
+                if (!password) return alert('Password required.');
+                try {
+                    const decoded = await decryptData(sharedData, password);
+                    renderMemories(decoded, true);
+                    document.querySelector('h2').textContent = "Shared Memories";
+                    form.style.display = 'none';
+                    shareBtn.style.display = 'none';
+                    exportBtn.style.display = 'none';
+                    importBtn.style.display = 'none';
+                } catch (e) {
+                    alert('Invalid password or link.');
+                }
+            } else {
+                renderMemories(memories);
+            }
+        });
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            formError.textContent = '';
+            const text = document.getElementById('text').value.trim();
+            const imageFile = document.getElementById('image').files[0];
+            const videoFile = document.getElementById('video').files[0];
+
+            if (!text && !imageFile && !videoFile) {
+                formError.textContent = 'Please add at least text, an image, or a video.';
+                return;
+            }
+
+            if (imageFile && imageFile.size > 5 * 1024 * 1024) {
+                formError.textContent = 'Image file too large (max 5MB).';
+                return;
+            }
+            if (videoFile && videoFile.size > 50 * 1024 * 1024) {
+                formError.textContent = 'Video file too large (max 50MB).';
+                return;
+            }
+
+            loading.style.display = 'block';
+            const memory = { text: text || null };
+
+            let pending = 0;
+            function save() {
+                pending--;
+                if (pending <= 0) {
+                    memories.push(memory);
+                    localStorage.setItem('memories', JSON.stringify(memories));
+                    renderMemories(memories);
+                    form.reset();
+                    loading.style.display = 'none';
+                }
+            }
+
+            if (imageFile) {
+                pending++;
+                const r = new FileReader();
+                r.onload = () => { memory.image = r.result; save(); };
+                r.readAsDataURL(imageFile);
+            }
+
+            if (videoFile) {
+                pending++;
+                const r = new FileReader();
+                r.onload = () => { memory.video = r.result; save(); };
+                r.readAsDataURL(videoFile);
+            }
+
+            if (!imageFile && !videoFile) {
+                memories.push(memory);
+                localStorage.setItem('memories', JSON.stringify(memories));
+                renderMemories(memories);
+                form.reset();
+                loading.style.display = 'none';
+            }
+        });
+
+        shareBtn.addEventListener('click', async () => {
+            if (!memories.length) return alert('No memories to share!');
+            const password = prompt('Enter a password for private sharing:');
+            if (!password) return alert('Password required for private sharing.');
+            loading.style.display = 'block';
+            try {
+                const encrypted = await encryptData(memories, password);
+                const url = `${location.origin}${location.pathname}?data=${encrypted}`;
+                shareUrlInput.value = url;
+                await navigator.clipboard.writeText(url);
+                alert('Private share link copied! Share the link and password securely.');
+            } catch (e) {
+                alert('Error creating share link.');
+            }
+            loading.style.display = 'none';
+        });
+
+        exportBtn.addEventListener('click', () => {
+            if (!memories.length) return alert('No memories to export!');
+            const dataStr = JSON.stringify(memories);
+            const blob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'memories.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        importBtn.addEventListener('click', () => {
+            importFile.click();
+        });
+
+        importFile.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const r = new FileReader();
+            r.onload = () => {
+                try {
+                    const imported = JSON.parse(r.result);
+                    memories = imported;
+                    localStorage.setItem('memories', JSON.stringify(memories));
+                    renderMemories(memories);
+                    alert('Memories imported successfully!');
+                } catch {
+                    alert('Invalid file format.');
+                }
+            };
+            r.readAsText(file);
+        });
+    </script>
+</body>
+</html>
